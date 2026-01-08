@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ACLEANSHOES - POS</title>
+
+    <!-- PWA Manifest Placeholder -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#000000">
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        black: '#000000',
+                        dark: '#121212',
+                        gray: '#CCCCCC'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+
+        /* Thermal Printer CSS (58mm) */
+        @media print {
+            @page {
+                margin: 0;
+                size: 58mm auto;
+            }
+
+            body {
+                margin: 0;
+                padding: 0;
+                background: white;
+                color: black;
+            }
+
+            .no-print {
+                display: none !important;
+            }
+
+            .print-only {
+                display: block !important;
+            }
+
+            #receipt-area {
+                width: 58mm;
+                padding: 10px 5px;
+                font-family: 'Courier New', monospace;
+                font-size: 10px;
+                line-height: 1.2;
+            }
+
+            .dashed-line {
+                border-bottom: 1px dashed black;
+                margin: 5px 0;
+            }
+        }
+
+        .print-only {
+            display: none;
+        }
+    </style>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+
+<body class="bg-gray-50 text-slate-800 h-screen flex flex-col overflow-hidden" x-data="app()" x-init="initApp()">
+
+    <!-- HEADER (Mobile App Style) -->
+    <header class="bg-black text-white p-4 shadow-md z-10 no-print flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <!-- Logo Placeholder if file missing -->
+            <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center text-black font-bold text-xs"
+                x-show="!logoLoaded">A</div>
+            <img src="logo.png" @error="logoLoaded=false" class="w-8 h-8 object-contain rounded-full bg-white"
+                x-show="logoLoaded">
+            <div>
+                <h1 class="font-bold text-lg leading-tight tracking-wider" x-text="settings.shopName"></h1>
+                <p class="text-[10px] text-gray-400 font-light" x-text="settings.shopSlogan"></p>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <button @click="currentView = 'settings'" class="p-2 text-gray-400 hover:text-white transition">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+            </button>
+            <button @click="resetApp()" class="p-2 text-gray-500 hover:text-red-500 transition">
+                <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 overflow-y-auto p-4 pb-24 no-print relative">
+
+        <!-- VIEW: DASHBOARD -->
+        <div x-show="currentView === 'dashboard'" x-transition.opacity>
+            <h2 class="text-xl font-bold mb-4">👋 Halo, Admin</h2>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="bg-black text-white p-4 rounded-xl shadow-lg relative overflow-hidden">
+                    <div class="absolute -right-2 -bottom-2 opacity-10"><i data-lucide="shopping-bag"
+                            class="w-16 h-16"></i></div>
+                    <p class="text-xs text-gray-400 uppercase">Order Aktif</p>
+                    <h3 class="text-3xl font-extrabold mt-1" x-text="activeOrdersCount">0</h3>
+                </div>
+                <div class="bg-white border border-gray-200 p-4 rounded-xl shadow-sm">
+                    <p class="text-xs text-gray-500 uppercase">Omzet Hari Ini</p>
+                    <h3 class="text-xl font-bold mt-1 text-black" x-text="formatRupiah(todayRevenue)">Rp 0</h3>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <button @click="currentView = 'new_order'"
+                class="w-full bg-black text-white py-4 rounded-xl font-bold shadow-xl flex items-center justify-center gap-2 hover:bg-gray-800 transition transform active:scale-95 mb-3">
+                <i data-lucide="plus-circle"></i> Catat Order Baru
+            </button>
+            <button @click="syncData()" :disabled="syncing"
+                class="w-full bg-white border border-gray-200 text-black py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 hover:bg-gray-50 transition transform active:scale-95 mb-6">
+                <i data-lucide="refresh-cw" :class="syncing ? 'animate-spin' : ''" class="w-4 h-4"></i>
+                <span x-text="syncing ? 'Menyinkronkan...' : 'Sinkronkan Data'"></span>
+            </button>
+
+            <!-- Recent Orders (Summary) -->
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="font-bold text-lg">Order Terbaru</h3>
+                <button @click="currentView = 'orders'"
+                    class="text-xs font-bold text-black border-b border-black pb-0.5">Lihat Semua</button>
+            </div>
+
+            <div class="space-y-3">
+                <template x-for="order in recentOrders" :key="order.id">
+                    <div @click="viewOrderDetail(order)"
+                        class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center active:bg-gray-50 cursor-pointer">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-sm" x-text="order.customerName"></span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 font-mono"
+                                    x-text="order.id"></span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1"
+                                x-text="order.serviceType + ' • ' + formatDate(order.dateIn)"></p>
+                        </div>
+                        <div class="text-right">
+                            <span :class="statusColor(order.status)"
+                                class="text-[10px] font-bold px-2 py-1 rounded-full border">
+                                <span x-text="order.status"></span>
+                            </span>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="orders.length === 0" class="text-center py-8 text-gray-400 text-sm italic">
+                    Belum ada order hari ini.
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: NEW ORDER -->
+        <div x-show="currentView === 'new_order'" x-transition.opacity>
+            <div class="flex items-center gap-3 mb-6">
+                <button @click="currentView = 'dashboard'"
+                    class="w-8 h-8 rounded-full bg-white border flex items-center justify-center shadow-sm">
+                    <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                </button>
+                <h2 class="text-xl font-bold">Order Baru</h2>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+                <!-- Customer Info -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Nama Customer</label>
+                    <input type="text" x-model="form.customerName" placeholder="Contoh: Budi"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-semibold focus:outline-none focus:border-black focus:ring-1 focus:ring-black">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">WhatsApp</label>
+                    <input type="tel" x-model="form.whatsapp" placeholder="08..."
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-mono focus:outline-none focus:border-black">
+                </div>
+
+                <!-- Shoe Details -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Brand/Tipe Sepatu</label>
+                    <input type="text" x-model="form.shoeBrand" placeholder="Contoh: Nike Air Force 1"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 focus:outline-none focus:border-black">
+                </div>
+
+                <!-- Service Selection -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Layanan</label>
+                    <div class="grid grid-cols-1 gap-2">
+                        <template x-for="svc in servicesList" :key="svc.name">
+                            <div @click="selectService(svc)"
+                                :class="form.serviceType === svc.name ? 'border-black bg-black text-white' : 'border-gray-200 bg-white hover:bg-gray-50'"
+                                class="p-3 rounded-lg border cursor-pointer flex justify-between items-center transition">
+                                <span class="font-medium text-sm" x-text="svc.name"></span>
+                                <span class="font-bold text-sm" x-text="formatRupiah(svc.price)"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Estimation Info (Auto SLA +3 Days) -->
+                <div class="bg-gray-100 p-3 rounded-lg flex justify-between items-center">
+                    <div>
+                        <p class="text-xs text-gray-500">Estimasi Selesai (3 Hari)</p>
+                        <p class="font-bold text-sm" x-text="formatDate(form.estimationDate)"></p>
+                    </div>
+                    <i data-lucide="calendar-clock" class="text-gray-400 w-5 h-5"></i>
+                </div>
+
+                <!-- Submit Button -->
+                <button @click="saveOrder()" :disabled="!isFormValid"
+                    :class="!isFormValid ? 'opacity-50 cursor-not-allowed bg-gray-400' : 'bg-black'"
+                    class="w-full text-white py-4 rounded-xl font-bold mt-4 shadow-lg flex items-center justify-center gap-2">
+                    <span>Simpan Order</span>
+                    <span class="bg-white/20 px-2 py-0.5 rounded text-xs" x-text="formatRupiah(form.price)"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- VIEW: ORDER LIST -->
+        <div x-show="currentView === 'orders'" x-transition.opacity>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Daftar Order</h2>
+                <div class="relative flex-1 ml-4">
+                    <input type="text" x-model="searchQuery" placeholder="Cari nama/ID..."
+                        class="w-full bg-white border border-gray-200 rounded-full py-1.5 pl-8 pr-4 text-xs focus:outline-none focus:border-black transition">
+                    <i data-lucide="search" class="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="flex gap-2 overflow-x-auto pb-2 mb-4 scrollbar-hide">
+                <button @click="filterStatus = 'All'"
+                    :class="filterStatus === 'All' ? 'bg-black text-white' : 'bg-white text-gray-600 border'"
+                    class="px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap">Semua</button>
+                <button @click="filterStatus = 'Progress'"
+                    :class="filterStatus === 'Progress' ? 'bg-black text-white' : 'bg-white text-gray-600 border'"
+                    class="px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap">Sedang Proses</button>
+                <button @click="filterStatus = 'Ready'"
+                    :class="filterStatus === 'Ready' ? 'bg-black text-white' : 'bg-white text-gray-600 border'"
+                    class="px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap">Siap Ambil</button>
+                <button @click="filterStatus = 'Completed'"
+                    :class="filterStatus === 'Completed' ? 'bg-black text-white' : 'bg-white text-gray-600 border'"
+                    class="px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap">Selesai</button>
+            </div>
+
+            <!-- List -->
+            <div class="space-y-3 pb-20">
+                <template x-for="order in filteredOrders" :key="order.id">
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <h3 class="font-bold text-base" x-text="order.customerName"></h3>
+                                <p class="text-xs text-gray-500 font-mono" x-text="order.id"></p>
+                            </div>
+                            <span :class="statusColor(order.status)"
+                                class="text-[10px] font-bold px-2 py-1 rounded-full border"
+                                x-text="order.status"></span>
+                        </div>
+
+                        <div class="border-t border-dashed border-gray-200 my-2 pt-2">
+                            <p class="text-sm text-gray-800" x-text="order.shoeBrand"></p>
+                            <div class="flex justify-between mt-1">
+                                <p class="text-xs text-gray-500" x-text="order.serviceType"></p>
+                                <p class="text-xs font-bold" x-text="formatRupiah(order.price)"></p>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                            <button @click="viewOrderDetail(order)"
+                                class="py-2 bg-gray-50 text-xs font-bold rounded-lg hover:bg-gray-100">Detail /
+                                Print</button>
+                            <button x-show="order.status !== 'Completed'" @click="advanceStatus(order)"
+                                class="py-2 bg-black text-white text-xs font-bold rounded-lg">Next Status</button>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="filteredOrders.length === 0" class="text-center py-10 text-gray-400">
+                    <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 opacity-50"></i>
+                    <p class="text-sm">Tidak ada order ditemukan.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: ORDER DETAIL (Modal) -->
+        <div x-show="selectedOrder"
+            class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+            style="display: none;">
+            <div class="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl"
+                @click.away="selectedOrder = null">
+                <div class="bg-black text-white p-4 flex justify-between items-center">
+                    <h3 class="font-bold">Detail Order</h3>
+                    <button @click="selectedOrder = null"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-5" x-data="{ receiptMode: false }">
+                    <div class="text-center mb-6">
+                        <h2 class="text-2xl font-black" x-text="selectedOrder?.id"></h2>
+                        <span :class="statusColor(selectedOrder?.status)"
+                            class="text-xs px-2 py-1 rounded-full border mt-2 inline-block"
+                            x-text="selectedOrder?.status"></span>
+                    </div>
+
+                    <div class="space-y-2 text-sm mb-6">
+                        <div class="flex justify-between border-b pb-2">
+                            <span class="text-gray-500">Pelanggan</span>
+                            <span class="font-bold text-right" x-text="selectedOrder?.customerName"></span>
+                        </div>
+                        <div class="flex justify-between border-b pb-2">
+                            <span class="text-gray-500">Masuk</span>
+                            <span class="font-bold" x-text="formatDate(selectedOrder?.dateIn)"></span>
+                        </div>
+                        <div class="flex justify-between border-b pb-2">
+                            <span class="text-gray-500">Estimasi</span>
+                            <span class="font-bold text-black"
+                                x-text="formatDate(selectedOrder?.estimationDate)"></span>
+                        </div>
+                        <div class="flex justify-between border-b pb-2">
+                            <span class="text-gray-500">Layanan</span>
+                            <span class="font-bold" x-text="selectedOrder?.serviceType"></span>
+                        </div>
+                        <div class="flex justify-between pt-1">
+                            <span class="font-bold text-lg">Total</span>
+                            <span class="font-bold text-lg" x-text="formatRupiah(selectedOrder?.price || 0)"></span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button @click="printReceipt(selectedOrder)"
+                            class="flex items-center justify-center gap-2 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-sm">
+                            <i data-lucide="printer" class="w-4 h-4"></i> Print
+                        </button>
+                        <button @click="sendWhatsApp(selectedOrder)"
+                            class="flex items-center justify-center gap-2 py-3 bg-green-500 text-white hover:bg-green-600 rounded-xl font-bold text-sm">
+                            <i data-lucide="message-circle" class="w-4 h-4"></i> WhatsApp
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: SETTINGS -->
+        <div x-show="currentView === 'settings'" x-transition.opacity>
+            <div class="flex items-center gap-3 mb-6">
+                <button @click="currentView = 'dashboard'"
+                    class="w-8 h-8 rounded-full bg-white border flex items-center justify-center shadow-sm">
+                    <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                </button>
+                <h2 class="text-xl font-bold">Pengaturan Toko</h2>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Nama Toko</label>
+                    <input type="text" x-model="settings.shopName" @input="saveData()"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-semibold focus:outline-none focus:border-black">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Slogan Toko</label>
+                    <input type="text" x-model="settings.shopSlogan" @input="saveData()"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 focus:outline-none focus:border-black">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">WhatsApp Toko</label>
+                    <input type="tel" x-model="settings.shopWA" @input="saveData()" placeholder="Contoh: 08123456789"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 font-mono focus:outline-none focus:border-black">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Instagram</label>
+                    <input type="text" x-model="settings.shopIG" @input="saveData()" placeholder="@acleanshoes"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 focus:outline-none focus:border-black">
+                </div>
+                <div class="pt-4 border-t">
+                    <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Google Sheets Sync URL</label>
+                    <input type="url" x-model="settings.syncUrl" @input="saveData()"
+                        placeholder="https://script.google.com/macros/s/..."
+                        class="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono focus:outline-none focus:border-black">
+                    <p class="text-[10px] text-gray-400 mt-1">Gunakan URL Web App dari Google Apps Script untuk
+                        sinkronisasi data.</p>
+                </div>
+                <button @click="syncData()" :disabled="syncing"
+                    class="w-full bg-black text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 mt-4">
+                    <i data-lucide="refresh-cw" :class="syncing ? 'animate-spin' : ''" class="w-4 h-4"></i>
+                    <span x-text="syncing ? 'Sinking...' : 'Push: Simpan ke Sheets'"></span>
+                </button>
+                <button @click="pullData()" :disabled="syncing"
+                    class="w-full bg-white border border-black text-black py-3 rounded-xl font-bold flex items-center justify-center gap-2 mt-2">
+                    <i data-lucide="download" :class="syncing ? 'animate-spin' : ''" class="w-4 h-4"></i>
+                    <span x-text="syncing ? 'Sinking...' : 'Pull: Ambil dari Sheets'"></span>
+                </button>
+                <div class="pt-4 border-t">
+                    <p class="text-[10px] text-gray-400 text-center" x-text="settings.footerText"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- COPYRIGHT FOOTER (Always at bottom of scrolling content) -->
+        <footer class="mt-10 mb-20 text-center no-print">
+            <p class="text-[10px] text-gray-400 uppercase tracking-widest font-bold">&copy; 2026 <span
+                    x-text="settings.shopName"></span></p>
+            <a href="https://zensheet.my.id" target="_blank"
+                class="text-[9px] text-gray-300 hover:text-black transition mt-1 block"
+                x-text="settings.footerText"></a>
+        </footer>
+    </main>
+
+    <!-- BOTTOM NAVIGATION -->
+    <nav
+        class="fixed bottom-0 w-full bg-white border-t border-gray-200 flex justify-around py-3 px-2 z-40 no-print safe-area-pb">
+        <button @click="currentView = 'dashboard'"
+            :class="currentView === 'dashboard' ? 'text-black scale-110' : 'text-gray-400'"
+            class="flex flex-col items-center gap-1 transition">
+            <i data-lucide="home" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold">Home</span>
+        </button>
+        <button @click="currentView = 'new_order'"
+            :class="currentView === 'new_order' ? 'text-black scale-110' : 'text-gray-400'"
+            class="flex flex-col items-center gap-1 transition">
+            <div
+                class="w-10 h-10 bg-black text-white rounded-full flex items-center justify-center -mt-6 shadow-lg border-4 border-white">
+                <i data-lucide="plus" class="w-6 h-6"></i>
+            </div>
+            <span class="text-[10px] font-bold">Baru</span>
+        </button>
+        <button @click="currentView = 'orders'"
+            :class="currentView === 'orders' ? 'text-black scale-110' : 'text-gray-400'"
+            class="flex flex-col items-center gap-1 transition">
+            <i data-lucide="list" class="w-5 h-5"></i>
+            <span class="text-[10px] font-bold">Order</span>
+        </button>
+    </nav>
+
+    <!-- THERMAL RECEIPT TEMPLATE (Hidden on screen, Visible on Print) -->
+    <div id="receipt-area" class="print-only">
+        <div style="text-align: center; margin-bottom: 10px;">
+            <div style="font-size: 14px; font-weight: bold;" x-text="settings.shopName"></div>
+            <div x-text="settings.shopSlogan"></div>
+            <div x-text="'IG: ' + settings.shopIG"></div>
+        </div>
+
+        <div class="dashed-line"></div>
+
+        <div style="display: flex; justify-content: space-between;">
+            <span x-text="printData?.id"></span>
+            <span x-text="formatDate(printData?.dateIn)"></span>
+        </div>
+        <div>Pelanggan: <span x-text="printData?.customerName"></span></div>
+
+        <div class="dashed-line"></div>
+
+        <div style="margin-bottom: 5px;">
+            <div x-text="printData?.shoeBrand" style="font-weight: bold;"></div>
+            <div style="display: flex; justify-content: space-between;">
+                <span x-text="printData?.serviceType"></span>
+                <span x-text="formatRupiah(printData?.price || 0)"></span>
+            </div>
+        </div>
+
+        <div class="dashed-line"></div>
+
+        <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 12px;">
+            <span>TOTAL</span>
+            <span x-text="formatRupiah(printData?.price || 0)"></span>
+        </div>
+
+        <div class="dashed-line"></div>
+
+        <div style="text-align: center; margin-top: 10px;">
+            <div>Estimasi Selesai:</div>
+            <div style="font-weight: bold; font-size: 12px;" x-text="formatDate(printData?.estimationDate)"></div>
+            <div style="margin-top: 10px;">Terima Kasih!</div>
+        </div>
+    </div>
+
+    <!-- APP LOGIC -->
+    <script>
+        function app() {
+            return {
+                currentView: 'dashboard',
+                logoLoaded: true,
+                orders: [],
+                filterStatus: 'All',
+                searchQuery: '', // Added search query
+                selectedOrder: null,
+                printData: null,
+
+                // Settings Data
+                settings: {
+                    shopName: 'ACLEANSHOES',
+                    shopSlogan: 'Ciptakan Langkah Tanpa Noda',
+                    shopIG: '@acleanshoes',
+                    shopWA: '',
+                    syncUrl: '', // Add sync URL
+                    footerText: 'ZenSheet zensheet.my.id'
+                },
+
+                syncing: false, // Sync state
+
+                // Form Data
+                form: {
+                    customerName: '',
+                    whatsapp: '',
+                    shoeBrand: '',
+                    serviceType: '',
+                    price: 0,
+                    dateIn: '',
+                    estimationDate: ''
+                },
+
+                // Config Services
+                servicesList: [
+                    { name: 'Fast Cleaning', price: 35000 },
+                    { name: 'Deep Cleaning', price: 35000 },
+                    { name: 'Unyellowing', price: 50000 }
+                ],
+
+                initApp() {
+                    // Load data from LocalStorage
+                    const storedOrders = localStorage.getItem('acleanshoes_orders');
+                    if (storedOrders) this.orders = JSON.parse(storedOrders);
+
+                    const storedSettings = localStorage.getItem('acleanshoes_settings');
+                    if (storedSettings) this.settings = { ...this.settings, ...JSON.parse(storedSettings) };
+
+                    this.resetForm();
+
+                    // Lucide Icons Render
+                    this.$watch('currentView', () => setTimeout(() => lucide.createIcons(), 50));
+                    setTimeout(() => lucide.createIcons(), 0);
+                },
+
+                async syncData() {
+                    if (!this.settings.syncUrl) {
+                        alert('Silakan isi URL Sync di Pengaturan terlebih dahulu.');
+                        this.currentView = 'settings';
+                        return;
+                    }
+
+                    this.syncing = true;
+                    try {
+                        const response = await fetch(this.settings.syncUrl, {
+                            method: 'POST',
+                            mode: 'no-cors', // Common for Apps Script Web Apps
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                shop: this.settings.shopName,
+                                lastSync: new Date().toISOString(),
+                                orders: this.orders,
+                                settings: this.settings
+                            })
+                        });
+
+                        alert('✅ Sinkronisasi Berhasil! (Data terkirim)');
+                    } catch (error) {
+                        console.error('Sync error:', error);
+                        alert('❌ Sinkronisasi Gagal. Cek URL atau koneksi internet Anda.');
+                    } finally {
+                        this.syncing = false;
+                    }
+                },
+
+                async pullData() {
+                    if (!this.settings.syncUrl) {
+                        alert('Silakan isi URL Sync di Pengaturan terlebih dahulu.');
+                        this.currentView = 'settings';
+                        return;
+                    }
+
+                    if (!confirm('Impor data dari Google Sheets? Data lokal yang ada akan digabung.')) return;
+
+                    this.syncing = true;
+                    try {
+                        const response = await fetch(this.settings.syncUrl);
+                        const remoteOrders = await response.json();
+
+                        if (Array.isArray(remoteOrders)) {
+                            let addedCount = 0;
+                            remoteOrders.forEach(remote => {
+                                const exists = this.orders.find(o => o.id === remote.id);
+                                if (!exists) {
+                                    this.orders.push(remote);
+                                    addedCount++;
+                                } else {
+                                    Object.assign(exists, remote);
+                                }
+                            });
+
+                            this.saveData();
+                            alert(`✅ Berhasil menarik data! ${addedCount} order baru ditambahkan.`);
+                        }
+                    } catch (error) {
+                        console.error('Pull error:', error);
+                        alert('❌ Gagal menarik data. Pastikan URL benar dan Apps Script sudah di-deploy ulang.');
+                    } finally {
+                        this.syncing = false;
+                    }
+                },
+
+                get isFormValid() {
+                    return this.form.customerName && this.form.shoeBrand && this.form.serviceType;
+                },
+
+                // Computed Stats
+                get activeOrdersCount() {
+                    return this.orders.filter(o => o.status !== 'Completed').length;
+                },
+                get todayRevenue() {
+                    const today = new Date().toISOString().split('T')[0];
+                    return this.orders
+                        .filter(o => o.dateIn === today)
+                        .reduce((sum, o) => sum + o.price, 0);
+                },
+                get recentOrders() {
+                    return [...this.orders].reverse().slice(0, 3);
+                },
+                get filteredOrders() {
+                    let list = [...this.orders].reverse();
+
+                    // Apply Search
+                    if (this.searchQuery) {
+                        const q = this.searchQuery.toLowerCase();
+                        list = list.filter(o =>
+                            o.customerName.toLowerCase().includes(q) ||
+                            o.id.toLowerCase().includes(q) ||
+                            o.shoeBrand.toLowerCase().includes(q)
+                        );
+                    }
+
+                    if (this.filterStatus === 'Progress') return list.filter(o => o.status === 'Queued' || o.status === 'Washing');
+                    if (this.filterStatus === 'Ready') return list.filter(o => o.status === 'Ready');
+                    if (this.filterStatus === 'Completed') return list.filter(o => o.status === 'Completed');
+                    return list;
+                },
+
+                // Actions
+                selectService(svc) {
+                    this.form.serviceType = svc.name;
+                    this.form.price = svc.price;
+                },
+
+                resetForm() {
+                    const today = new Date();
+                    const estimate = new Date(today);
+                    estimate.setDate(today.getDate() + 3); // SLA +3 Days
+
+                    this.form = {
+                        customerName: '',
+                        whatsapp: '',
+                        shoeBrand: '',
+                        serviceType: '',
+                        price: 0,
+                        dateIn: today.toISOString().split('T')[0],
+                        estimationDate: estimate.toISOString().split('T')[0]
+                    };
+                },
+
+                saveOrder() {
+                    const newId = 'ORD-' + (Date.now().toString().slice(-6));
+                    const newOrder = {
+                        id: newId,
+                        ...this.form,
+                        status: 'Queued' // Queued -> Washing -> Ready -> Completed
+                    };
+
+                    this.orders.push(newOrder);
+                    this.saveData();
+                    this.resetForm();
+
+                    // Show success & redirect
+                    alert('✅ Order Berhasil Disimpan!');
+                    this.currentView = 'orders';
+                },
+
+                advanceStatus(order) {
+                    const flow = ['Queued', 'Washing', 'Ready', 'Completed'];
+                    const idx = flow.indexOf(order.status);
+                    if (idx < flow.length - 1) {
+                        const nextStatus = flow[idx + 1];
+                        order.status = nextStatus;
+                        this.saveData();
+
+                        // Auto-prompt WhatsApp if Ready
+                        if (nextStatus === 'Ready' && confirm('Order siap diambil! Kirim pesan WA ke customer?')) {
+                            this.sendWhatsApp(order, 'Ready');
+                        }
+                    }
+                },
+
+                viewOrderDetail(order) {
+                    this.selectedOrder = order;
+                },
+
+                saveData() {
+                    localStorage.setItem('acleanshoes_orders', JSON.stringify(this.orders));
+                    localStorage.setItem('acleanshoes_settings', JSON.stringify(this.settings));
+                },
+
+                resetApp() {
+                    if (confirm('Reset semua data aplikasi?')) {
+                        localStorage.removeItem('acleanshoes_orders');
+                        this.orders = [];
+                    }
+                },
+
+                // Utilities
+                formatRupiah(value) {
+                    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value);
+                },
+
+                formatDate(dateString) {
+                    if (!dateString) return '-';
+                    const date = new Date(dateString);
+                    return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
+                },
+
+                statusColor(status) {
+                    const colors = {
+                        'Queued': 'bg-gray-100 text-gray-600 border-gray-200',
+                        'Washing': 'bg-blue-50 text-blue-600 border-blue-200',
+                        'Ready': 'bg-green-50 text-green-600 border-green-200',
+                        'Completed': 'bg-black text-white border-black'
+                    };
+                    return colors[status] || 'bg-gray-100';
+                },
+
+                // Features
+                printReceipt(order) {
+                    this.printData = order;
+                    // Need explicit small timeout to let Alpine render the print section data
+                    setTimeout(() => {
+                        window.print();
+                    }, 100);
+                },
+
+                sendWhatsApp(order, type = 'New') {
+                    if (!order.whatsapp) {
+                        alert('Nomor WA belum diisi!');
+                        return;
+                    }
+
+                    // Auto format 08 -> 628
+                    let phone = order.whatsapp.replace(/\D/g, '');
+                    if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+
+                    let text = '';
+                    if (type === 'New') {
+                        text = `Halo Kak ${order.customerName}! 👋\n\n` +
+                            `Terima kasih telah mencuci sepatu di *${this.settings.shopName}*.\n` +
+                            `No Order: ${order.id}\n` +
+                            `Layanan: ${order.serviceType}\n` +
+                            `Total: ${this.formatRupiah(order.price)}\n\n` +
+                            `Sepatu kakak akan kami proses secepatnya dengan estimasi selesai tgl ${this.formatDate(order.estimationDate)}. \n\n` +
+                            `${this.settings.shopSlogan} ✨`;
+                    } else if (type === 'Ready') {
+                        text = `Halo Kak ${order.customerName}! 👋\n\n` +
+                            `Kabar gembira! Sepatu kamu dengan No Order *${order.id}* sudah *SIAP DIAMBIL* di *${this.settings.shopName}*.\n\n` +
+                            `Sampai jumpa di store ya! ✨`;
+                    }
+
+                    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+                    window.open(url, '_blank');
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
