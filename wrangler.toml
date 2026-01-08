@@ -1,0 +1,6 @@
+name = "acleanshoes-official"
+compatibility_date = "2024-04-03"
+
+[assets]
+directory = "."
+binding = "ASSETS"
