@@ -548,17 +548,10 @@
 
                     const storedSettings = localStorage.getItem('acleanshoes_settings');
                     if (storedSettings) {
-                        const parsed = JSON.parse(storedSettings);
-                        this.settings = { ...this.settings, ...parsed };
-
-                        // Force update if stored URL is empty but hardcoded is not
-                        if (!this.settings.syncUrl && this.settings.syncUrl !== '') {
-                            // This part is tricky because it's already merged in settings initialization.
-                            // If parsed.syncUrl is empty, it overwrites the hardcoded one.
-                        }
+                        this.settings = { ...this.settings, ...JSON.parse(storedSettings) };
                     }
 
-                    // Cleaner approach: If after loading, it's still empty, use the global default
+                    // Always ensure syncUrl is not empty if a default exists
                     if (!this.settings.syncUrl) {
                         this.settings.syncUrl = 'https://script.google.com/macros/s/AKfycbw05Vc8chUlBYr8oH751elUeMnlzH9waX7B_SWaY_Q703rXRw7OGuLBPqc4KBRFeG0E/exec';
                     }
@@ -577,25 +570,38 @@
                         return;
                     }
 
+                    if (this.orders.length === 0) {
+                        alert('⚠️ Tidak ada data order untuk disinkronkan.');
+                        return;
+                    }
+
                     this.syncing = true;
                     try {
+                        const payload = {
+                            shop: this.settings.shopName,
+                            pin: this.settings.syncPin,
+                            lastSync: new Date().toISOString(),
+                            orders: this.orders,
+                            settings: this.settings
+                        };
+
+                        // Use simple POST with text/plain to avoid preflight & allow reading response
                         const response = await fetch(this.settings.syncUrl, {
                             method: 'POST',
-                            mode: 'no-cors', // Common for Apps Script Web Apps
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                shop: this.settings.shopName,
-                                pin: this.settings.syncPin, // Send PIN
-                                lastSync: new Date().toISOString(),
-                                orders: this.orders,
-                                settings: this.settings
-                            })
+                            headers: { 'Content-Type': 'text/plain' },
+                            body: JSON.stringify(payload)
                         });
 
-                        alert('✅ Sinkronisasi Berhasil! (Data terkirim)');
+                        const result = await response.text();
+
+                        if (result.startsWith('Error')) {
+                            alert('❌ Gagal: ' + result);
+                        } else {
+                            alert('✅ Sinkronisasi Berhasil!');
+                        }
                     } catch (error) {
                         console.error('Sync error:', error);
-                        alert('❌ Sinkronisasi Gagal. Cek URL atau koneksi internet Anda.');
+                        alert('❌ Sinkronisasi Gagal. Pastikan URL benar dan Apps Script sudah di-deploy ulang.');
                     } finally {
                         this.syncing = false;
                     }
