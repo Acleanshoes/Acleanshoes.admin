@@ -547,7 +547,21 @@
                     if (storedOrders) this.orders = JSON.parse(storedOrders);
 
                     const storedSettings = localStorage.getItem('acleanshoes_settings');
-                    if (storedSettings) this.settings = { ...this.settings, ...JSON.parse(storedSettings) };
+                    if (storedSettings) {
+                        const parsed = JSON.parse(storedSettings);
+                        this.settings = { ...this.settings, ...parsed };
+
+                        // Force update if stored URL is empty but hardcoded is not
+                        if (!this.settings.syncUrl && this.settings.syncUrl !== '') {
+                            // This part is tricky because it's already merged in settings initialization.
+                            // If parsed.syncUrl is empty, it overwrites the hardcoded one.
+                        }
+                    }
+
+                    // Cleaner approach: If after loading, it's still empty, use the global default
+                    if (!this.settings.syncUrl) {
+                        this.settings.syncUrl = 'https://script.google.com/macros/s/AKfycbw05Vc8chUlBYr8oH751elUeMnlzH9waX7B_SWaY_Q703rXRw7OGuLBPqc4KBRFeG0E/exec';
+                    }
 
                     this.resetForm();
 
